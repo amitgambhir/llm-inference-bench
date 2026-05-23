@@ -1,0 +1,8 @@
+name: rag
+description: Retrieval-augmented generation with mid-size context
+isl: 2048
+osl: 256
+concurrency: 30
+latency_sla_ms: 700
+scale: mixed
+notes: "L4 FP8 baseline: TTFT p50=115ms, p95=133ms at c=10. Prefix-caching helps when system prompt is shared."

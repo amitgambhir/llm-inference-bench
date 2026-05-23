@@ -1,0 +1,52 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: rhaiis-cuda
+  annotations:
+    opendatahub.io/apiProtocol: REST
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8000"
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  multiModel: false
+  supportedModelFormats:
+  - autoSelect: true
+    name: vLLM
+  containers:
+  - name: kserve-container
+    image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.2.4
+    command: ["python", "-m", "vllm.entrypoints.openai.api_server"]
+    args:
+    - --port=8000
+    - --model=/mnt/models
+    - "--served-model-name={{.Name}}"
+    - --max-model-len=16000
+    - --disable-uvicorn-access-log
+    # Performance flags — enable selectively per experiment:
+    # - --enable-chunked-prefill         # see playbook/advisor.py for when this helps
+    # - --max-num-seqs=128               # single most impactful flag at high concurrency
+    # - --enable-prefix-caching          # safe to leave on
+    env:
+    - name: HF_HOME
+      value: /tmp/hf_home
+    - name: HF_HUB_OFFLINE
+      value: "1"
+    - name: VLLM_NO_USAGE_STATS
+      value: "1"
+    ports:
+    - containerPort: 8000
+    resources:
+      requests:
+        nvidia.com/gpu: "1"
+      limits:
+        nvidia.com/gpu: "1"
+    volumeMounts:
+    - mountPath: /dev/shm
+      name: shm
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 2Gi

@@ -1,0 +1,8 @@
+name: long_context
+description: Long-context batch summarization / portfolio review
+isl: 4096
+osl: 512
+concurrency: 50
+latency_sla_ms: 2000
+scale: batch
+notes: "L4 FP8: TTFT p50=134ms, p95=335ms at c=50. On A100/H100 FP16, enable chunked-prefill."

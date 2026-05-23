@@ -1,0 +1,8 @@
+name: chat
+description: Real-time conversational assistant
+isl: 512
+osl: 128
+concurrency: 20
+latency_sla_ms: 300
+scale: realtime
+notes: "L4 FP8 baseline: TTFT p50=75ms, p95=81ms at c=10"
