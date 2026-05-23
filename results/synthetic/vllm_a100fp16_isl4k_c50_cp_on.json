@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "tag": "vllm_a100fp16_isl4k_c50_cp_on",
+    "runtime": "vllm",
+    "model": "llama-3.1-8b-fp16",
+    "gpu": {
+      "name": "NVIDIA A100",
+      "memory_mb": 40960,
+      "util_pct": 0
+    },
+    "config": {
+      "chunked_prefill": true,
+      "tensor_parallel_size": 1,
+      "shared_prefix": false
+    },
+    "workload": {
+      "isl_approx": 4096,
+      "osl_max": 128,
+      "concurrency": 50,
+      "duration_secs": 90
+    },
+    "synthetic": true,
+    "timestamp": "2026-05-23T19:16:20+00:00"
+  },
+  "metrics": {
+    "ttft_ms": {
+      "p50": 290,
+      "p90": 350.0,
+      "p95": 410,
+      "p99": 615.0,
+      "mean": 278.4
+    },
+    "total_latency_ms": {
+      "p50": 4700,
+      "p95": 4900,
+      "p99": 5145.0
+    },
+    "throughput_tokens_per_sec": 1180,
+    "throughput_req_per_sec": 9.22,
+    "total_requests": 830,
+    "successful_requests": 830,
+    "failed_requests": 0
+  }
+}

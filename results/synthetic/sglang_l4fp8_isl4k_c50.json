@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "tag": "sglang_l4fp8_isl4k_c50",
+    "runtime": "sglang",
+    "model": "llama-3.1-8b",
+    "gpu": {
+      "name": "NVIDIA L4",
+      "memory_mb": 23034,
+      "util_pct": 0
+    },
+    "config": {
+      "chunked_prefill": false,
+      "tensor_parallel_size": 1,
+      "shared_prefix": false
+    },
+    "workload": {
+      "isl_approx": 4096,
+      "osl_max": 128,
+      "concurrency": 50,
+      "duration_secs": 90
+    },
+    "synthetic": true,
+    "timestamp": "2026-05-23T19:16:20+00:00"
+  },
+  "metrics": {
+    "ttft_ms": {
+      "p50": 128,
+      "p90": 224.0,
+      "p95": 320,
+      "p99": 480.0,
+      "mean": 122.9
+    },
+    "total_latency_ms": {
+      "p50": 4628,
+      "p95": 4920,
+      "p99": 5166.0
+    },
+    "throughput_tokens_per_sec": 737,
+    "throughput_req_per_sec": 5.76,
+    "total_requests": 518,
+    "successful_requests": 518,
+    "failed_requests": 0
+  }
+}

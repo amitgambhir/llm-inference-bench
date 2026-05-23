@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "tag": "vllm_h100fp16_isl2k_c50",
+    "runtime": "vllm",
+    "model": "llama-3.1-8b-fp16",
+    "gpu": {
+      "name": "NVIDIA H100",
+      "memory_mb": 81920,
+      "util_pct": 0
+    },
+    "config": {
+      "chunked_prefill": false,
+      "tensor_parallel_size": 1,
+      "shared_prefix": false
+    },
+    "workload": {
+      "isl_approx": 2048,
+      "osl_max": 128,
+      "concurrency": 50,
+      "duration_secs": 90
+    },
+    "synthetic": true,
+    "timestamp": "2026-05-23T19:16:20+00:00"
+  },
+  "metrics": {
+    "ttft_ms": {
+      "p50": 95,
+      "p90": 152.5,
+      "p95": 210,
+      "p99": 315.0,
+      "mean": 91.2
+    },
+    "total_latency_ms": {
+      "p50": 4595,
+      "p95": 4810,
+      "p99": 5050.5
+    },
+    "throughput_tokens_per_sec": 1480,
+    "throughput_req_per_sec": 11.56,
+    "total_requests": 1041,
+    "successful_requests": 1041,
+    "failed_requests": 0
+  }
+}
