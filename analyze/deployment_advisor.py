@@ -279,7 +279,7 @@ def render(recommendation, output_format="markdown"):
 
     if eliminated:
         for e in eliminated:
-            qdelta = abs(e["quality_delta_pct"]) if e.get("quality_delta_pct") is not None else "N/A"
+            qdelta = abs(e["quality_delta_pct"])
             lines.append("Eliminated: {} — quality drop {:.1f}% exceeds threshold ({:.1f}%)".format(
                 e["tag"], qdelta, threshold * 100))
         lines.append("")
@@ -303,3 +303,56 @@ def render(recommendation, output_format="markdown"):
             r["tag"], ttft, toks, qual, cost, status))
 
     return "\n".join(lines)
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Quality-aware deployment advisor — compare latency, quality, and cost."
+    )
+    parser.add_argument("--tags", nargs="+", required=True,
+                        help="Deployment tags to compare")
+    parser.add_argument("--baseline", required=True,
+                        help="Tag to use as baseline")
+    parser.add_argument("--quality-threshold", type=float, default=0.10,
+                        help="Max acceptable quality drop vs baseline (default: 0.10 = 10%%)")
+    parser.add_argument("--output", choices=["markdown", "json"], default="markdown",
+                        help="Output format (default: markdown)")
+    parser.add_argument("--latency-dirs", nargs="+",
+                        help="Override latency result directories (default: results/synthetic results/real)")
+    parser.add_argument("--quality-dir",
+                        help="Override quality sidecar directory (default: results/quality)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Validate inputs and print what would run, then exit")
+    args = parser.parse_args()
+
+    latency_dirs = args.latency_dirs or [
+        os.path.join(REPO_ROOT, "results", "synthetic"),
+        os.path.join(REPO_ROOT, "results", "real"),
+    ]
+    quality_dir = args.quality_dir or os.path.join(REPO_ROOT, "results", "quality")
+
+    profiles = []
+    for tag in args.tags:
+        profile = load_deployment(tag, latency_dirs, quality_dir)
+        profiles.append(profile)
+
+    if args.dry_run:
+        print("Dry run — would compare {} profiles:".format(len(profiles)))
+        for p in profiles:
+            qual_status = "quality: {:.3f}".format(p["quality"]["overall_score"]) \
+                if p.get("quality") and p["quality"].get("overall_score") is not None \
+                else "quality: N/A"
+            print("  {} ({}, {})".format(p["tag"], p["model"], qual_status))
+        print("Baseline: {}".format(args.baseline))
+        print("Quality threshold: {:.0f}%".format(args.quality_threshold * 100))
+        sys.exit(0)
+
+    rows = compute_tradeoff(profiles, args.baseline)
+    recommendation = recommend(rows, args.quality_threshold)
+    print(render(recommendation, args.output))
+
+
+if __name__ == "__main__":
+    main()
