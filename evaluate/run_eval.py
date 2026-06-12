@@ -229,3 +229,178 @@ def run_deepeval(samples, eval_model, workload):
         round(sum(aggregated.values()) / len(aggregated), 4) if aggregated else None
     )
     return aggregated, overall_score
+
+
+def run_llm_judge(samples, eval_endpoint, eval_model, eval_token):
+    """
+    Score samples using any OpenAI-compatible chat endpoint as judge.
+    Returns (aggregated_metrics_dict, overall_score).
+    """
+    import urllib.request
+
+    SCORING_PROMPT = (
+        "Score this response on three dimensions (1-5 each):\n"
+        "  correctness: does it answer the question accurately?\n"
+        "  helpfulness: is it useful and complete?\n"
+        "  hallucination: 5=none, 1=severe fabrication\n\n"
+        "Question: {prompt}\n"
+        "Expected answer: {expected}\n"
+        "Response: {response}\n\n"
+        'Return JSON only: {{"correctness": N, "helpfulness": N, "hallucination": N}}'
+    )
+
+    scores = {"correctness": [], "helpfulness": [], "hallucination": []}
+
+    for row, response in samples:
+        prompt = SCORING_PROMPT.format(
+            prompt=row["prompt"][:500],
+            expected=row["expected"][:500],
+            response=response[:500],
+        )
+        headers = {"Content-Type": "application/json"}
+        if eval_token:
+            headers["Authorization"] = "Bearer " + eval_token
+        payload = json.dumps({
+            "model": eval_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": 64,
+        }).encode()
+
+        try:
+            req = urllib.request.Request(
+                eval_endpoint.rstrip("/") + "/chat/completions",
+                data=payload,
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+            content = data["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+            for k in scores:
+                if k in parsed:
+                    raw = float(parsed[k]) / 5.0  # normalize 1-5 → 0-1
+                    scores[k].append(normalize_score(k, raw))
+        except Exception as e:
+            print("WARN: LLM judge failed on sample {}: {}".format(row["id"], e), file=sys.stderr)
+
+    aggregated = {
+        k: round(sum(vals) / len(vals), 4)
+        for k, vals in scores.items()
+        if vals
+    }
+    overall_score = (
+        round(sum(aggregated.values()) / len(aggregated), 4) if aggregated else None
+    )
+    return aggregated, overall_score
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Offline quality evaluator for LLM deployments")
+    ap.add_argument("--endpoint", required=True,
+                    help="Inference endpoint being evaluated (OpenAI-compatible /v1/completions)")
+    ap.add_argument("--model", required=True,
+                    help="Model name served at --endpoint")
+    ap.add_argument("--latency-result", required=True, dest="latency_result",
+                    help="Path to the latency JSON produced by collect/run_bench.py")
+    ap.add_argument("--dataset", required=True,
+                    help="Path to eval JSONL dataset (datasets/chat.jsonl etc.)")
+    ap.add_argument("--evaluator", choices=["deepeval", "llm-judge"], default="deepeval",
+                    help="Scoring backend (default: deepeval)")
+    ap.add_argument("--eval-model", dest="eval_model", default="gpt-4o",
+                    help="Judge model name used by DeepEval or llm-judge (default: gpt-4o)")
+    ap.add_argument("--eval-endpoint", dest="eval_endpoint",
+                    default="https://api.openai.com/v1",
+                    help="Judge model endpoint (default: https://api.openai.com/v1)")
+    ap.add_argument("--token", default=os.environ.get("OPENAI_API_KEY", ""),
+                    help="Bearer token for --endpoint (default: $OPENAI_API_KEY)")
+    ap.add_argument("--eval-token", dest="eval_token",
+                    default=os.environ.get("OPENAI_API_KEY", ""),
+                    help="Bearer token for --eval-endpoint (default: $OPENAI_API_KEY)")
+    ap.add_argument("--cost-per-million-tokens", type=float, dest="cost_per_million",
+                    default=None,
+                    help="Cost per 1M output tokens for this deployment (optional)")
+    ap.add_argument("--output-dir", dest="output_dir", default="./results/quality",
+                    help="Directory for quality sidecar JSON (default: ./results/quality)")
+    ap.add_argument("--dry-run", action="store_true", dest="dry_run",
+                    help="Validate inputs and print plan without hitting the endpoint")
+    args = ap.parse_args()
+
+    if not os.path.isfile(args.latency_result):
+        print("ERROR: latency result not found: {}".format(args.latency_result), file=sys.stderr)
+        sys.exit(1)
+    if not os.path.isfile(args.dataset):
+        print("ERROR: dataset not found: {}".format(args.dataset), file=sys.stderr)
+        sys.exit(1)
+
+    with open(args.latency_result) as f:
+        latency_data = json.load(f)
+    latency_tag = latency_data.get("meta", {}).get("tag") or derive_tag(args.latency_result)
+    throughput_proxy = latency_data.get("metrics", {}).get("throughput_tokens_per_sec")
+
+    dataset = load_dataset(args.dataset)
+    tag = derive_tag(args.latency_result)
+    workloads = {row["workload"] for row in dataset}
+    workload = workloads.pop() if len(workloads) == 1 else "mixed"
+
+    if args.dry_run:
+        print("=== Dry run ===")
+        print("  latency-result : {}".format(args.latency_result))
+        print("  latency-tag    : {}".format(latency_tag))
+        print("  dataset        : {} ({} samples, workload={})".format(
+            args.dataset, len(dataset), workload))
+        print("  evaluator      : {}".format(args.evaluator))
+        print("  eval-model     : {}".format(args.eval_model))
+        print("  eval-endpoint  : {}".format(args.eval_endpoint))
+        print("  output-tag     : {}".format(tag))
+        print("  output-dir     : {}".format(args.output_dir))
+        print("Would collect responses and run evaluation. Exiting (--dry-run).")
+        return
+
+    print("Collecting {} responses from {} ...".format(len(dataset), args.endpoint))
+    samples, errors = asyncio.run(
+        collect_responses(args.endpoint, args.model, args.token, dataset)
+    )
+    if not samples:
+        print("ERROR: no samples collected — check endpoint and model", file=sys.stderr)
+        sys.exit(1)
+    if errors:
+        print("WARN: {}/{} samples failed, continuing with {}".format(
+            len(errors), len(dataset), len(samples)))
+
+    print("Evaluating with {} ...".format(args.evaluator))
+    if args.evaluator == "deepeval":
+        try:
+            import deepeval  # noqa: F401
+        except ImportError:
+            print("ERROR: DeepEval not installed. Run: pip install deepeval", file=sys.stderr)
+            sys.exit(1)
+        metrics, overall_score = run_deepeval(samples, args.eval_model, workload)
+    else:
+        metrics, overall_score = run_llm_judge(
+            samples, args.eval_endpoint, args.eval_model, args.eval_token
+        )
+
+    out_path = write_sidecar(
+        out_dir=os.path.expanduser(args.output_dir),
+        tag=tag,
+        latency_tag=latency_tag,
+        evaluator=args.evaluator,
+        model=args.model,
+        dataset_path=args.dataset,
+        num_samples=len(samples),
+        metrics=metrics,
+        overall_score=overall_score,
+        cost_per_million=args.cost_per_million,
+        throughput_proxy=throughput_proxy,
+    )
+
+    print("overall_score={}".format(overall_score))
+    for k, v in metrics.items():
+        print("  {}={}".format(k, v))
+    print("wrote {}".format(out_path))
+
+
+if __name__ == "__main__":
+    main()
