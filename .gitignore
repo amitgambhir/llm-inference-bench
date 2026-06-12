@@ -4,8 +4,9 @@ __pycache__/
 .DS_Store
 results/real/*.json
 
-# Scaffolding prompt — kept locally, not published
+# Kept locally, not published
 CLAUDE_CODE_PROMPT.md
+CLAUDE.md
 
 # Superpowers design and implementation docs
 docs/superpowers/
