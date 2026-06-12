@@ -147,3 +147,85 @@ async def collect_responses(endpoint, model, token, dataset, concurrency=5):
         await asyncio.gather(*[one(session, row) for row in dataset])
 
     return samples, errors
+
+
+def run_deepeval(samples, eval_model, workload):
+    """
+    Score (row, response) samples using DeepEval metrics.
+    Returns (aggregated_metrics_dict, overall_score).
+    All metrics normalized to higher-is-better before averaging.
+    """
+    from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, HallucinationMetric
+    from deepeval.metrics import GEval
+    from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+
+    has_contexts = any(row.get("contexts") for row, _ in samples)
+    active = select_metrics(workload, has_contexts)
+
+    metrics = []
+    if "answer_relevancy" in active:
+        metrics.append(AnswerRelevancyMetric(model=eval_model, threshold=0.5))
+    if "correctness" in active:
+        metrics.append(GEval(
+            name="Correctness",
+            criteria=(
+                "Does the actual output accurately answer the input question "
+                "based on the expected output?"
+            ),
+            evaluation_params=[
+                LLMTestCaseParams.INPUT,
+                LLMTestCaseParams.ACTUAL_OUTPUT,
+                LLMTestCaseParams.EXPECTED_OUTPUT,
+            ],
+            model=eval_model,
+            threshold=0.5,
+        ))
+    if "faithfulness" in active:
+        metrics.append(FaithfulnessMetric(model=eval_model, threshold=0.5))
+    if "hallucination" in active:
+        metrics.append(HallucinationMetric(model=eval_model, threshold=0.5))
+
+    def canonical_name(metric):
+        n = type(metric).__name__.lower()
+        if "relevancy" in n:
+            return "answer_relevancy"
+        if "geval" in n or "correctness" in n:
+            return "correctness"
+        if "faithfulness" in n:
+            return "faithfulness"
+        if "hallucination" in n:
+            return "hallucination"
+        return n
+
+    per_metric = {m: [] for m in active}
+
+    for row, response in samples:
+        tc = LLMTestCase(
+            input=row["prompt"],
+            actual_output=response,
+            expected_output=row["expected"],
+            context=row.get("contexts"),
+        )
+        for metric in metrics:
+            try:
+                metric.measure(tc)
+                key = canonical_name(metric)
+                if key in per_metric:
+                    per_metric[key].append(normalize_score(key, metric.score))
+            except Exception as e:
+                print(
+                    "WARN: DeepEval {} failed on sample {}: {}".format(
+                        type(metric).__name__, row["id"], e
+                    ),
+                    file=sys.stderr,
+                )
+
+    aggregated = {
+        k: round(sum(vals) / len(vals), 4)
+        for k, vals in per_metric.items()
+        if vals
+    }
+    overall_score = (
+        round(sum(aggregated.values()) / len(aggregated), 4) if aggregated else None
+    )
+    return aggregated, overall_score
