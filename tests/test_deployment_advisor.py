@@ -1,6 +1,6 @@
 import json
 import pytest
-from analyze.deployment_advisor import load_deployment
+from analyze.deployment_advisor import load_deployment, compute_tradeoff
 
 
 def make_latency_json(tag, ttft_p50=115, ttft_p95=133, throughput=262, model="llama-3.1-8b"):
@@ -52,6 +52,25 @@ def write_json(directory, filename, data):
     path = directory / filename
     path.write_text(json.dumps(data))
     return str(path)
+
+
+def make_profile(tag, ttft_p50=200, throughput=200, overall_score=0.90,
+                 cost_per_million=1.20, throughput_proxy=200, is_baseline=False):
+    return {
+        "tag": tag,
+        "model": "llama-3.1-8b",
+        "latency": {
+            "ttft_ms_p50": ttft_p50,
+            "ttft_ms_p95": ttft_p50 + 20,
+            "throughput_tokens_per_sec": throughput,
+        },
+        "quality": {"overall_score": overall_score, "metrics": {}} if overall_score is not None else None,
+        "cost": {
+            "per_million_tokens": cost_per_million,
+            "throughput_proxy_tokens_per_sec": throughput_proxy,
+        },
+        "_dataset": "datasets/rag.jsonl",
+    }
 
 
 @pytest.fixture
@@ -127,3 +146,67 @@ class TestLoadDeployment:
         write_json(qual_dir, "fp16.json", sidecar)
         profile = load_deployment("fp16", [str(lat_dir)], str(qual_dir))
         assert profile["quality"]["overall_score"] is None
+
+
+class TestComputeTradeoff:
+    def test_baseline_row_has_none_deltas(self):
+        profiles = [make_profile("base")]
+        rows = compute_tradeoff(profiles, "base")
+        base_row = rows[0]
+        assert base_row["is_baseline"] is True
+        assert base_row["latency_improvement_pct"] is None
+        assert base_row["quality_delta_pct"] is None
+        assert base_row["cost_reduction_pct"] is None
+
+    def test_latency_improvement_computed_correctly(self):
+        profiles = [make_profile("base", ttft_p50=200), make_profile("fast", ttft_p50=100)]
+        rows = compute_tradeoff(profiles, "base")
+        fast_row = next(r for r in rows if r["tag"] == "fast")
+        assert fast_row["latency_improvement_pct"] == pytest.approx(50.0)
+
+    def test_quality_delta_computed_correctly(self):
+        profiles = [make_profile("base", overall_score=0.90), make_profile("alt", overall_score=0.85)]
+        rows = compute_tradeoff(profiles, "base")
+        alt_row = next(r for r in rows if r["tag"] == "alt")
+        assert alt_row["quality_delta_pct"] == pytest.approx(-5.0)
+
+    def test_cost_reduction_uses_per_million_tokens(self):
+        profiles = [
+            make_profile("base", cost_per_million=1.20),
+            make_profile("cheap", cost_per_million=0.90),
+        ]
+        rows = compute_tradeoff(profiles, "base")
+        cheap_row = next(r for r in rows if r["tag"] == "cheap")
+        assert cheap_row["cost_reduction_pct"] == pytest.approx(25.0)
+
+    def test_cost_reduction_falls_back_to_throughput_proxy(self):
+        profiles = [
+            make_profile("base", cost_per_million=None, throughput_proxy=200),
+            make_profile("fast", cost_per_million=None, throughput_proxy=400),
+        ]
+        rows = compute_tradeoff(profiles, "base")
+        fast_row = next(r for r in rows if r["tag"] == "fast")
+        assert fast_row["cost_reduction_pct"] == pytest.approx(50.0)
+
+    def test_cost_none_when_no_cost_data(self):
+        profiles = [
+            make_profile("base", cost_per_million=None, throughput_proxy=None),
+            make_profile("alt", cost_per_million=None, throughput_proxy=None),
+        ]
+        rows = compute_tradeoff(profiles, "base")
+        alt_row = next(r for r in rows if r["tag"] == "alt")
+        assert alt_row["cost_reduction_pct"] is None
+
+    def test_quality_delta_none_when_no_quality_data(self):
+        profiles = [
+            make_profile("base", overall_score=None),
+            make_profile("alt", overall_score=None),
+        ]
+        rows = compute_tradeoff(profiles, "base")
+        alt_row = next(r for r in rows if r["tag"] == "alt")
+        assert alt_row["quality_delta_pct"] is None
+
+    def test_missing_baseline_tag_exits(self):
+        profiles = [make_profile("fp8")]
+        with pytest.raises(SystemExit):
+            compute_tradeoff(profiles, "nonexistent")

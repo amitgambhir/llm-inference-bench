@@ -112,3 +112,72 @@ def load_deployment(tag, latency_dirs, quality_dir):
         print("WARN: no quality sidecar for '{}' (expected {}) — quality metrics will be N/A".format(tag, qual_path), file=sys.stderr)
 
     return profile
+
+
+def compute_tradeoff(profiles, baseline_tag):
+    """
+    Compute relative latency/quality/cost deltas for each profile vs baseline.
+    Returns a list of row dicts, one per profile (including baseline).
+    """
+    baseline = next((p for p in profiles if p["tag"] == baseline_tag), None)
+    if baseline is None:
+        print(
+            "ERROR: baseline tag '{}' not found in profiles. "
+            "Available tags: {}".format(baseline_tag, [p["tag"] for p in profiles]),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    base_ttft = baseline["latency"]["ttft_ms_p50"]
+    base_quality = (
+        baseline["quality"]["overall_score"]
+        if baseline.get("quality") and baseline["quality"].get("overall_score") is not None
+        else None
+    )
+    base_cost_pm = baseline["cost"].get("per_million_tokens")
+    base_throughput = baseline["cost"].get("throughput_proxy_tokens_per_sec")
+
+    rows = []
+    for p in profiles:
+        is_baseline = p["tag"] == baseline_tag
+        tag_ttft = p["latency"]["ttft_ms_p50"]
+        tag_quality = (
+            p["quality"]["overall_score"]
+            if p.get("quality") and p["quality"].get("overall_score") is not None
+            else None
+        )
+        tag_cost_pm = p["cost"].get("per_million_tokens")
+        tag_throughput = p["cost"].get("throughput_proxy_tokens_per_sec")
+
+        if is_baseline:
+            latency_imp = None
+            quality_delta = None
+            cost_red = None
+        else:
+            latency_imp = (base_ttft - tag_ttft) / base_ttft * 100 if base_ttft else None
+
+            if tag_quality is not None and base_quality is not None:
+                quality_delta = (tag_quality - base_quality) * 100
+            else:
+                quality_delta = None
+
+            if tag_cost_pm is not None and base_cost_pm is not None:
+                cost_red = (base_cost_pm - tag_cost_pm) / base_cost_pm * 100
+            elif tag_throughput and base_throughput:
+                cost_red = (tag_throughput - base_throughput) / tag_throughput * 100
+            else:
+                cost_red = None
+
+        rows.append({
+            "tag": p["tag"],
+            "is_baseline": is_baseline,
+            "ttft_ms_p50": tag_ttft,
+            "throughput_tokens_per_sec": p["latency"]["throughput_tokens_per_sec"],
+            "overall_score": tag_quality,
+            "cost_per_million": tag_cost_pm,
+            "latency_improvement_pct": latency_imp,
+            "quality_delta_pct": quality_delta,
+            "cost_reduction_pct": cost_red,
+        })
+
+    return rows
