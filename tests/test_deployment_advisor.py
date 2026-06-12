@@ -1,5 +1,6 @@
 import json
 import pytest
+from analyze.deployment_advisor import load_deployment
 
 
 def make_latency_json(tag, ttft_p50=115, ttft_p95=133, throughput=262, model="llama-3.1-8b"):
@@ -70,7 +71,6 @@ def qual_dir(tmp_path):
 class TestLoadDeployment:
     def test_latency_only_profile(self, lat_dir, qual_dir):
         write_json(lat_dir, "fp16.json", make_latency_json("fp16"))
-        from analyze.deployment_advisor import load_deployment
         profile = load_deployment("fp16", [str(lat_dir)], str(qual_dir))
         assert profile["tag"] == "fp16"
         assert profile["latency"]["ttft_ms_p50"] == 115
@@ -80,7 +80,6 @@ class TestLoadDeployment:
 
     def test_flattens_nested_latency_schema(self, lat_dir, qual_dir):
         write_json(lat_dir, "fp16.json", make_latency_json("fp16", ttft_p50=200, ttft_p95=350))
-        from analyze.deployment_advisor import load_deployment
         profile = load_deployment("fp16", [str(lat_dir)], str(qual_dir))
         assert profile["latency"]["ttft_ms_p50"] == 200
         assert profile["latency"]["ttft_ms_p95"] == 350
@@ -88,13 +87,11 @@ class TestLoadDeployment:
     def test_merges_quality_sidecar(self, lat_dir, qual_dir):
         write_json(lat_dir, "fp8.json", make_latency_json("fp8", ttft_p50=80))
         write_json(qual_dir, "fp8.json", make_quality_json("fp8", overall_score=0.93))
-        from analyze.deployment_advisor import load_deployment
         profile = load_deployment("fp8", [str(lat_dir)], str(qual_dir))
         assert profile["quality"]["overall_score"] == 0.93
         assert profile["cost"]["per_million_tokens"] == 0.80
 
     def test_missing_latency_tag_exits(self, lat_dir, qual_dir):
-        from analyze.deployment_advisor import load_deployment
         with pytest.raises(SystemExit):
             load_deployment("nonexistent", [str(lat_dir)], str(qual_dir))
 
@@ -102,7 +99,6 @@ class TestLoadDeployment:
         write_json(lat_dir, "fp8.json", make_latency_json("fp8"))
         stale = make_quality_json("fp8", latency_tag="different_tag")
         write_json(qual_dir, "fp8.json", stale)
-        from analyze.deployment_advisor import load_deployment
         with pytest.raises(SystemExit):
             load_deployment("fp8", [str(lat_dir)], str(qual_dir))
 
@@ -110,9 +106,24 @@ class TestLoadDeployment:
         syn_dir = tmp_path / "synthetic"
         real_dir = tmp_path / "real"
         qual_dir = tmp_path / "quality"
-        syn_dir.mkdir(); real_dir.mkdir(); qual_dir.mkdir()
+        syn_dir.mkdir()
+        real_dir.mkdir()
+        qual_dir.mkdir()
         write_json(syn_dir, "fp8.json", make_latency_json("fp8", ttft_p50=150))
         write_json(real_dir, "fp8.json", make_latency_json("fp8", ttft_p50=90))
-        from analyze.deployment_advisor import load_deployment
         profile = load_deployment("fp8", [str(syn_dir), str(real_dir)], str(qual_dir))
         assert profile["latency"]["ttft_ms_p50"] == 90
+
+    def test_missing_required_latency_field_exits(self, lat_dir, qual_dir):
+        data = make_latency_json("fp16")
+        del data["metrics"]["ttft_ms"]
+        write_json(lat_dir, "fp16.json", data)
+        with pytest.raises(SystemExit):
+            load_deployment("fp16", [str(lat_dir)], str(qual_dir))
+
+    def test_quality_sidecar_null_overall_score(self, lat_dir, qual_dir):
+        write_json(lat_dir, "fp16.json", make_latency_json("fp16"))
+        sidecar = make_quality_json("fp16", overall_score=None)
+        write_json(qual_dir, "fp16.json", sidecar)
+        profile = load_deployment("fp16", [str(lat_dir)], str(qual_dir))
+        assert profile["quality"]["overall_score"] is None

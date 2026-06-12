@@ -5,7 +5,6 @@ Quality-aware deployment advisor.
 Merges latency benchmark results with quality evaluation sidecars to
 produce a deployment recommendation balancing latency, cost, and quality.
 """
-import argparse
 import json
 import os
 import sys
@@ -28,9 +27,10 @@ def _find_latency_file(tag, latency_dirs):
 
 
 def validate_profile(profile):
-    """Fail fast if required latency fields are missing."""
+    """Fail fast if required latency fields are missing or None."""
     required = {"ttft_ms_p50", "ttft_ms_p95", "throughput_tokens_per_sec"}
-    missing = required - set(profile.get("latency", {}).keys())
+    lat = profile.get("latency", {})
+    missing = {f for f in required if lat.get(f) is None}
     if missing:
         print(
             "ERROR: profile '{}' missing latency fields: {}".format(
@@ -101,15 +101,14 @@ def load_deployment(tag, latency_dirs, quality_dir):
         }
         cost = qual_raw.get("cost", {})
         profile["cost"]["per_million_tokens"] = cost.get("per_million_tokens")
+
+        # prefer quality sidecar value; fall back to latency file throughput
         profile["cost"]["throughput_proxy_tokens_per_sec"] = (
             cost.get("throughput_proxy_tokens_per_sec")
             or profile["cost"]["throughput_proxy_tokens_per_sec"]
         )
         profile["_dataset"] = qual_raw.get("meta", {}).get("dataset")
     else:
-        print(
-            "WARN: no quality sidecar for '{}' — quality metrics will be N/A".format(tag),
-            file=sys.stderr,
-        )
+        print("WARN: no quality sidecar for '{}' (expected {}) — quality metrics will be N/A".format(tag, qual_path), file=sys.stderr)
 
     return profile
