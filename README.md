@@ -398,7 +398,9 @@ Sends eval dataset prompts to an inference endpoint at low concurrency (5 worker
 | `rag` (no `contexts` field) | same as above |
 | `rag` (with `contexts` field) | above + `FaithfulnessMetric`, `HallucinationMetric` |
 
-**Requires:** `pip install deepeval` (already in `requirements.txt`). Authentication for the judge model uses the `OPENAI_API_KEY` environment variable.
+**Requires:** `pip install deepeval` (already in `requirements.txt`). When `--eval-endpoint` or `--eval-token` are provided, the process-level `OPENAI_API_KEY` / `OPENAI_BASE_URL` environment variables are set before DeepEval runs — safe for the CLI, but be aware of this side effect if calling `run_deepeval` as a library.
+
+**Dataset validation.** `load_dataset` requires `schema_version: 1` in every row — any other value is a hard error. Valid workloads: `"chat"`, `"rag"`, `"long_context"`.
 
 ### 6.5 `analyze/deployment_advisor.py` — deployment decision engine
 
@@ -419,6 +421,13 @@ Loads latency results and quality sidecars for each tag, computes relative delta
 | `--dry-run` | Load all tags and print a summary, then exit |
 
 **Cost model.** Uses `--cost-per-million-tokens` from the quality sidecar when available on both profiles. Falls back to throughput ratio as a proxy. Shows "N/A" when neither is available.
+
+**Hard errors.** The advisor stops immediately (with a clear message) on:
+
+- Tag not found in any latency directory
+- `latency_tag` in quality sidecar doesn't match the loaded tag — stale sidecar can silently corrupt a recommendation
+- `meta.model` in quality sidecar differs from latency result model
+- Profiles being compared carry quality scores from different eval datasets — results are not comparable
 
 **Relation to `playbook/advisor.py`.** The playbook advisor answers "what vLLM flags should I use?" The deployment advisor answers "which quantization / precision / configuration should I deploy?" Two advisors, two levels of the stack — neither replaces the other.
 
