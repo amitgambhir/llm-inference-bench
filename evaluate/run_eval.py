@@ -94,3 +94,56 @@ def write_sidecar(out_dir, tag, latency_tag, evaluator, model, dataset_path,
     with open(path, "w") as f:
         json.dump(out, f, indent=2)
     return path
+
+
+async def send_prompt(session, endpoint, model, token, prompt, max_tokens=256):
+    """Send a single prompt (non-streaming) and return the response text."""
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+        "stream": False,
+    }
+    async with session.post(endpoint, json=payload, headers=headers) as resp:
+        if resp.status != 200:
+            raise RuntimeError("HTTP {}".format(resp.status))
+        data = await resp.json()
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError("empty choices in response")
+        return (
+            choices[0].get("text")
+            or choices[0].get("message", {}).get("content")
+            or ""
+        )
+
+
+async def collect_responses(endpoint, model, token, dataset, concurrency=5):
+    """
+    Send all dataset prompts to the endpoint.
+    Returns (samples, errors) where samples is a list of (row, response_text) tuples.
+    Concurrency is deliberately low (5) to avoid warming the KV cache or
+    interfering with a parallel load test.
+    """
+    sem = asyncio.Semaphore(concurrency)
+    timeout = aiohttp.ClientTimeout(total=120)
+    samples = []
+    errors = []
+
+    async def one(session, row):
+        async with sem:
+            try:
+                response = await send_prompt(session, endpoint, model, token, row["prompt"])
+                samples.append((row, response))
+            except Exception as e:
+                errors.append((row["id"], repr(e)))
+                print("WARN: sample {} failed: {}".format(row["id"], e), file=sys.stderr)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        await asyncio.gather(*[one(session, row) for row in dataset])
+
+    return samples, errors
