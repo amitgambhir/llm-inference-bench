@@ -147,6 +147,13 @@ class TestLoadDeployment:
         profile = load_deployment("fp16", [str(lat_dir)], str(qual_dir))
         assert profile["quality"]["overall_score"] is None
 
+    def test_model_mismatch_is_hard_error(self, lat_dir, qual_dir):
+        write_json(lat_dir, "fp8.json", make_latency_json("fp8", model="llama-3.1-8b"))
+        stale = make_quality_json("fp8", model="mistral-7b")
+        write_json(qual_dir, "fp8.json", stale)
+        with pytest.raises(SystemExit):
+            load_deployment("fp8", [str(lat_dir)], str(qual_dir))
+
 
 class TestComputeTradeoff:
     def test_baseline_row_has_none_deltas(self):
@@ -210,6 +217,14 @@ class TestComputeTradeoff:
         profiles = [make_profile("fp8")]
         with pytest.raises(SystemExit):
             compute_tradeoff(profiles, "nonexistent")
+
+    def test_dataset_mismatch_exits(self):
+        p1 = make_profile("base")
+        p2 = make_profile("fp8")
+        p1["_dataset"] = "datasets/chat.jsonl"
+        p2["_dataset"] = "datasets/rag.jsonl"
+        with pytest.raises(SystemExit):
+            compute_tradeoff([p1, p2], "base")
 
 
 class TestRecommend:

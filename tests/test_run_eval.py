@@ -57,6 +57,16 @@ class TestLoadDataset:
         with pytest.raises(SystemExit):
             load_dataset(str(p))
 
+    def test_unsupported_schema_version(self, tmp_path):
+        p = tmp_path / "bad.jsonl"
+        p.write_text(json.dumps({
+            "schema_version": 2, "id": "x", "workload": "chat",
+            "prompt": "hi", "expected": "hello"
+        }) + "\n")
+        from evaluate.run_eval import load_dataset
+        with pytest.raises(SystemExit):
+            load_dataset(str(p))
+
 
 class TestNormalizeScore:
     def test_hallucination_is_inverted(self):

@@ -94,6 +94,17 @@ def load_deployment(tag, latency_dirs, quality_dir):
             )
             sys.exit(1)
 
+        qual_model = qual_raw.get("meta", {}).get("model")
+        if qual_model and qual_model != profile["model"]:
+            print(
+                "ERROR: quality sidecar for '{}' has model='{}' but latency result has model='{}'. "
+                "Re-run evaluate/run_eval.py against the correct deployment.".format(
+                    tag, qual_model, profile["model"]
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
         qm = qual_raw.get("metrics", {})
         profile["quality"] = {
             "overall_score": qm.get("overall_score"),
@@ -124,6 +135,15 @@ def compute_tradeoff(profiles, baseline_tag):
         print(
             "ERROR: baseline tag '{}' not found in profiles. "
             "Available tags: {}".format(baseline_tag, [p["tag"] for p in profiles]),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    datasets = {p["_dataset"] for p in profiles if p.get("_dataset")}
+    if len(datasets) > 1:
+        print(
+            "ERROR: profiles use different eval datasets — quality scores are not comparable. "
+            "Datasets found: {}".format(sorted(datasets)),
             file=sys.stderr,
         )
         sys.exit(1)

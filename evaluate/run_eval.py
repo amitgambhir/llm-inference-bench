@@ -39,6 +39,14 @@ def load_dataset(path):
             if missing:
                 print("ERROR: {}:{}: missing fields: {}".format(path, lineno, missing), file=sys.stderr)
                 sys.exit(1)
+            if row["schema_version"] != 1:
+                print(
+                    "ERROR: {}:{}: unsupported schema_version '{}' (expected 1)".format(
+                        path, lineno, row["schema_version"]
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if row["workload"] not in valid_workloads:
                 print("ERROR: {}:{}: unknown workload '{}'".format(path, lineno, row["workload"]), file=sys.stderr)
                 sys.exit(1)
@@ -149,7 +157,7 @@ async def collect_responses(endpoint, model, token, dataset, concurrency=5):
     return samples, errors
 
 
-def run_deepeval(samples, eval_model, workload):
+def run_deepeval(samples, eval_model, workload, eval_endpoint=None, eval_token=None):
     """
     Score (row, response) samples using DeepEval metrics.
     Returns (aggregated_metrics_dict, overall_score).
@@ -158,6 +166,11 @@ def run_deepeval(samples, eval_model, workload):
     from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, HallucinationMetric
     from deepeval.metrics import GEval
     from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+
+    if eval_token:
+        os.environ["OPENAI_API_KEY"] = eval_token
+    if eval_endpoint and eval_endpoint != "https://api.openai.com/v1":
+        os.environ["OPENAI_BASE_URL"] = eval_endpoint.rstrip("/")
 
     has_contexts = any(row.get("contexts") for row, _ in samples)
     active = select_metrics(workload, has_contexts)
@@ -280,8 +293,7 @@ def run_llm_judge(samples, eval_endpoint, eval_model, eval_token):
             parsed = json.loads(content)
             for k in scores:
                 if k in parsed:
-                    raw = float(parsed[k]) / 5.0  # normalize 1-5 → 0-1
-                    scores[k].append(normalize_score(k, raw))
+                    scores[k].append(float(parsed[k]) / 5.0)  # 1-5 → 0-1; all metrics already higher-is-better
         except Exception as e:
             print("WARN: LLM judge failed on sample {}: {}".format(row["id"], e), file=sys.stderr)
 
@@ -376,7 +388,9 @@ def main():
         except ImportError:
             print("ERROR: DeepEval not installed. Run: pip install deepeval", file=sys.stderr)
             sys.exit(1)
-        metrics, overall_score = run_deepeval(samples, args.eval_model, workload)
+        metrics, overall_score = run_deepeval(samples, args.eval_model, workload,
+                                               eval_endpoint=args.eval_endpoint,
+                                               eval_token=args.eval_token)
     else:
         metrics, overall_score = run_llm_judge(
             samples, args.eval_endpoint, args.eval_model, args.eval_token
