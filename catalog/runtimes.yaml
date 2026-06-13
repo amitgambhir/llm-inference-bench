@@ -1,0 +1,35 @@
+# catalog/runtimes.yaml
+# Serving runtimes and the tuning flags each exposes. Feeds the Phase 2 config recommendation
+# (which flags the playbook advisor is allowed to recommend for a given runtime).
+
+vllm:
+  display_name: "vLLM"
+  openai_compatible: true
+  flags:
+    - max-num-seqs
+    - max-model-len
+    - tensor-parallel-size
+    - enable-chunked-prefill
+    - enable-prefix-caching
+    - kv-cache-dtype
+    - gpu-memory-utilization
+    - swap-space
+  notes: "Default serving target for the harness. Most flags map directly to the advisor's outputs."
+
+sglang:
+  display_name: "SGLang"
+  openai_compatible: true
+  flags:
+    - max-running-requests        # SGLang's analog to max-num-seqs
+    - context-length
+    - tp-size
+    - chunked-prefill-size
+    - enable-radix-cache          # prefix caching analog
+    - mem-fraction-static
+  notes: "RadixAttention gives strong prefix-cache wins on shared-prefix workloads."
+
+managed:
+  display_name: "Managed endpoint (Baseten / Bedrock / Vertex / etc.)"
+  openai_compatible: true
+  flags: []
+  notes: "Config is provider-controlled; planner sizes by measured/estimated throughput only, no flag recommendations."

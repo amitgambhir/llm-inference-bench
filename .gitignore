@@ -1,8 +1,47 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# DeepEval
+.deepeval/
+
+# Environment
 .env
+.env.*
+
+# OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Benchmark results (real runs — gitignored; synthetic stays committed)
 results/real/*.json
+
+# API runtime database
+*.db
+
+# UI build artifacts
+ui/node_modules/
+ui/.next/
+ui/package-lock.json
+ui/next-env.d.ts
 
 # Kept locally, not published
 CLAUDE_CODE_PROMPT.md

@@ -1,0 +1,137 @@
+# catalog/models.yaml
+# Seed models — EXAMPLES, not the supported set. Users plan for any model via the dropdown
+# OR the custom-model form (full inline spec, or param-only rough spec). One MoE + two dense
+# are seeded so there's something to demo and to back the golden test.
+#
+# Resident-weight memory uses total_params (all experts live in HBM). Per-token prefill/decode
+# COMPUTE uses active_params. For MoE in mixed precision (4-bit experts + bf16 attn), a single
+# weight_bytes_per_param is approximate — set resident_weights_gb to override with the real
+# checkpoint size when known.
+#
+# kv_bytes_per_token = 2 * num_layers * num_kv_heads * head_dim * kv_dtype_bytes  (GQA: use kv_heads)
+
+gpt-oss-20b:                          # MoE seed — backs the golden test
+  display_name: "gpt-oss-20b"
+  is_moe: true
+  total_params: 20_900_000_000        # 20.9B (model card)
+  active_params: 3_610_000_000        # 3.61B active per token (top-4 of 32 experts)
+  num_experts: 32
+  experts_per_token: 4
+  num_layers: 24
+  d_model: 2880                        # hidden_size
+  num_q_heads: 64
+  num_kv_heads: 8                      # GQA group size 8
+  head_dim: 64
+  native_dtype: mxfp4                  # MoE weights MXFP4; attention + activations BF16
+  weight_bytes_per_param: 0.5          # nominal 4-bit; overridden by resident_weights_gb below
+  resident_weights_gb: 13.0            # ~12.8 GiB checkpoint (mixed MXFP4/BF16) — prefer this for memory
+  kv_dtype_bytes: 1                    # fp8 KV; set 2 for fp16/bf16 KV
+  geometry_source: known
+  context_len: 131072
+
+llama-3.1-8b:                         # dense seed — backs the L4/FP8 anchors
+  display_name: "Llama 3.1 8B"
+  is_moe: false
+  total_params: 8_030_000_000
+  active_params: 8_030_000_000         # dense → active == total
+  num_layers: 32
+  d_model: 4096
+  num_q_heads: 32
+  num_kv_heads: 8                      # GQA
+  head_dim: 128
+  native_dtype: bf16                   # commonly served fp8 or bf16
+  weight_bytes_per_param: 2.0          # bf16; set 1.0 for fp8 serving
+  kv_dtype_bytes: 1
+  geometry_source: known
+  context_len: 131072
+
+llama-3.1-70b:                        # dense seed — for 8B-vs-70B scenario comparison
+  display_name: "Llama 3.1 70B"
+  is_moe: false
+  total_params: 70_600_000_000
+  active_params: 70_600_000_000
+  num_layers: 80
+  d_model: 8192
+  num_q_heads: 64
+  num_kv_heads: 8                      # GQA
+  head_dim: 128
+  native_dtype: bf16
+  weight_bytes_per_param: 2.0          # bf16; fp8 serving → 1.0 (≈70GB, fits one 80GB card)
+  kv_dtype_bytes: 1
+  geometry_source: known
+  context_len: 131072
+
+qwen3-8b:                             # dense, very common open alternative to Llama 8B
+  display_name: "Qwen3-8B"
+  is_moe: false
+  total_params: 8_190_000_000
+  active_params: 8_190_000_000
+  num_layers: 36
+  d_model: 4096
+  num_q_heads: 32
+  num_kv_heads: 8                      # GQA
+  head_dim: 128                        # note: q dim = 32*128 = 4096 (decoupled from d_model)
+  native_dtype: bf16
+  weight_bytes_per_param: 2.0          # bf16; fp8 serving → 1.0
+  kv_dtype_bytes: 1
+  geometry_source: known
+  context_len: 40960                   # native; extends to ~131072 via YaRN
+
+qwen3-30b-a3b:                        # MoE, popular "efficient" mid MoE (3B active of 30B)
+  display_name: "Qwen3-30B-A3B"
+  is_moe: true
+  total_params: 30_500_000_000
+  active_params: 3_300_000_000         # "A3B" — ~3.3B active per token
+  num_experts: 128
+  experts_per_token: 8
+  num_layers: 48
+  d_model: 2048
+  num_q_heads: 32
+  num_kv_heads: 4                      # GQA — small KV (4 heads) keeps cache light
+  head_dim: 128                        # q dim = 32*128 = 4096; kv dim = 4*128 = 512
+  native_dtype: bf16
+  weight_bytes_per_param: 2.0
+  kv_dtype_bytes: 1
+  geometry_source: known
+  context_len: 40960                   # extends via YaRN
+
+mistral-small-24b:                    # dense, fills the 8B↔70B gap; different family (Mistral)
+  display_name: "Mistral Small 24B (2501/3.x)"
+  is_moe: false
+  total_params: 23_570_000_000
+  active_params: 23_570_000_000
+  num_layers: 40
+  d_model: 5120
+  num_q_heads: 32
+  num_kv_heads: 8                      # GQA
+  head_dim: 128
+  native_dtype: bf16
+  weight_bytes_per_param: 2.0
+  kv_dtype_bytes: 1
+  geometry_source: known
+  context_len: 131072
+
+gemma-2-9b:                           # dense, Google ecosystem — but NON-STANDARD KV, read note
+  display_name: "Gemma 2 9B"
+  is_moe: false
+  total_params: 9_240_000_000
+  active_params: 9_240_000_000
+  num_layers: 42
+  d_model: 3584
+  num_q_heads: 16
+  num_kv_heads: 8                      # GQA
+  head_dim: 256                        # ATYPICAL: 256 (2x most models) → heavy KV per token
+  native_dtype: bf16
+  weight_bytes_per_param: 2.0
+  kv_dtype_bytes: 2                    # Gemma commonly served bf16 KV
+  geometry_source: known
+  context_len: 8192
+  kv_cache_note: >
+    Interleaved attention: alternating layers use sliding-window LOCAL attention (window 4096)
+    vs GLOBAL attention. For context > 4096, the local layers cap their KV at 4096 tokens, so the
+    naive kv_bytes_per_token * context OVERESTIMATES KV. The planner's kv_budget() should treat
+    sliding-window layers specially (cap at window) or it will undersize concurrency for Gemma.
+    Combined with head_dim=256, Gemma's per-token KV is unusually large on the global layers.
+
+# Custom models supplied at request time get geometry_source: "estimated" when the rough
+# param-only path fills in missing geometry — which triggers a confidence downgrade + warning.

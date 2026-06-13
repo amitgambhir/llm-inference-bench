@@ -1,0 +1,85 @@
+# catalog/anchors.yaml
+# Measured calibration anchors. Each anchor lets the roofline back out a real MFU / bandwidth
+# efficiency for a (model, gpu, dtype, isl, concurrency) point, which upgrades confidence from
+# LOW (pure theory) toward HIGH for nearby scenarios. Phase 3's ingest_anchor.py appends new
+# rows from completed results/real/*.json and backfills derived_mfu_prefill.
+#
+# Seeded from the real L4 + Llama-3.1-8B-FP8 validation run (BENCHMARK_FINDINGS.md).
+# osl = 128 (harness default for these runs).
+
+- model: llama-3.1-8b
+  gpu: l4
+  dtype: fp8
+  isl: 512
+  osl: 128
+  concurrency: 10
+  measured_ttft_p50_ms: 75
+  measured_ttft_p95_ms: 81
+  measured_throughput_tok_s: 262
+  derived_mfu_prefill: null            # Phase 3 backfills
+  source: "BENCHMARK_FINDINGS.md — ISL=512 c=10"
+
+- model: llama-3.1-8b
+  gpu: l4
+  dtype: fp8
+  isl: 2048
+  osl: 128
+  concurrency: 10
+  measured_ttft_p50_ms: 115
+  measured_ttft_p95_ms: 133
+  measured_throughput_tok_s: 262
+  derived_mfu_prefill: null
+  source: "BENCHMARK_FINDINGS.md — ISL=2048 c=10"
+
+- model: llama-3.1-8b
+  gpu: l4
+  dtype: fp8
+  isl: 4096
+  osl: 128
+  concurrency: 50
+  measured_ttft_p50_ms: 134
+  measured_ttft_p95_ms: 335
+  measured_throughput_tok_s: 641
+  derived_mfu_prefill: null
+  source: "BENCHMARK_FINDINGS.md — ISL=4096 c=50"
+
+# max-num-seqs sweep at c=50 (the 172x finding). ISL=4096. Encodes how badly an undersized
+# max-num-seqs destroys TTFT — used to sanity-check the advisor's mns rule, not for sizing.
+- model: llama-3.1-8b
+  gpu: l4
+  dtype: fp8
+  isl: 4096
+  osl: 128
+  concurrency: 50
+  max_num_seqs: 8
+  measured_ttft_p50_ms: 24554
+  measured_ttft_p95_ms: null
+  measured_throughput_tok_s: 206
+  derived_mfu_prefill: null
+  source: "BENCHMARK_FINDINGS.md — mns=8 c=50"
+
+- model: llama-3.1-8b
+  gpu: l4
+  dtype: fp8
+  isl: 4096
+  osl: 128
+  concurrency: 50
+  max_num_seqs: 32
+  measured_ttft_p50_ms: 7787
+  measured_ttft_p95_ms: null
+  measured_throughput_tok_s: 502
+  derived_mfu_prefill: null
+  source: "BENCHMARK_FINDINGS.md — mns=32 c=50"
+
+- model: llama-3.1-8b
+  gpu: l4
+  dtype: fp8
+  isl: 4096
+  osl: 128
+  concurrency: 50
+  max_num_seqs: 128
+  measured_ttft_p50_ms: 143
+  measured_ttft_p95_ms: null
+  measured_throughput_tok_s: 714
+  derived_mfu_prefill: null
+  source: "BENCHMARK_FINDINGS.md — mns=128 c=50"

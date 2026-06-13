@@ -1,25 +1,28 @@
 # llm-inference-bench
 
-A controlled benchmarking and decision system for LLM inference deployments that evaluates performance, cost, and output quality across serving configurations and converts those signals into actionable deployment recommendations.
+> **From a business workload spec to a production-ready LLM inference configuration — without guessing.**
 
-It runs standardized workload benchmarks across configurable inference stacks (runtime, precision, batching, and model settings), evaluates response quality using dataset-driven or LLM-judge evaluators, and combines results with cost assumptions to compare deployment tradeoffs in a consistent environment.
+Most teams decide how many GPUs to buy, which quantization to use, and what vLLM flags to set by copying a blog post or over-provisioning to buy safety margin. This tool replaces that guesswork with a structured, measurement-driven workflow:
 
-The system is designed to support engineering decision-making for production LLM systems - helping teams choose optimal serving configurations under real-world constraints such as latency SLOs, budget limits, and quality thresholds.
+1. **Describe your workload** (requests/day, token lengths, latency SLO) — get a replica estimate and cost envelope *before* you touch any hardware.
+2. **Run the generated benchmark plan** against your actual GPU — real numbers replace the estimate, confidence upgrades automatically.
+3. **Compare deployments** on latency, cost, *and* quality together — not just the fastest option, but the best option that meets your quality bar.
 
----
-
-## Key Output
-
-For each workload and deployment configuration, the system produces:
-
-- Latency and throughput profiles under load
-- Cost-normalized efficiency estimates
-- Quality evaluation scores (optional but supported)
-- A ranked deployment recommendation based on configurable tradeoff policies
+Ships as a **web app** (Next.js + FastAPI, deployable on Vercel + Render in minutes) and as a **CLI** for automation pipelines.
 
 ---
 
-## Important Context
+## Key outputs
+
+| Stage | What you get |
+| --- | --- |
+| Before hardware | Replica count, cost envelope (on-demand + reserved), confidence level (HIGH/MEDIUM/LOW), calibrated benchmark plan |
+| After benchmarking | Validated latency profiles (TTFT p50/p95/p99, throughput, failure rate), upgraded confidence |
+| Deployment decision | Ranked recommendation across latency, cost, and quality — with eliminated options explained |
+
+---
+
+## Important context
 
 This is a **comparative inference evaluation framework**, not a hardware microbenchmarking tool.
 
@@ -31,14 +34,6 @@ Results are:
 
 ---
 
-## Why it exists
-
-Production LLM systems are not selected based on raw model capability - they are chosen based on **end-to-end deployment efficiency across cost, latency, and quality constraints**.
-
-This system operationalizes that decision space.
-
----
-
 ## Table of contents
 
 1. [The problem](#1-the-problem)
@@ -46,73 +41,86 @@ This system operationalizes that decision space.
 3. [Quick start - no GPU needed](#3-quick-start--no-gpu-needed)
 4. [Quick start - against a running endpoint](#4-quick-start--against-a-running-endpoint)
 5. [Quality-aware benchmarking](#5-quality-aware-benchmarking)
-6. [Components](#6-components)
-   - 6.1 [`collect/run_bench.py` - the benchmark harness](#61-collectrunbenchpy--the-benchmark-harness)
-   - 6.2 [`analyze/report.py` - Markdown report generator](#62-analyzereportpy--markdown-report-generator)
-   - 6.3 [`playbook/advisor.py` - config recommendation engine](#63-playbookadvisorpy--config-recommendation-engine)
-   - 6.4 [`evaluate/run_eval.py` - quality evaluator](#64-evaluaterunevalpy--quality-evaluator)
-   - 6.5 [`analyze/deployment_advisor.py` - deployment decision engine](#65-analyzedeploymentadvisorpy--deployment-decision-engine)
-   - 6.6 [`data/generate_synthetic.py` - reference dataset](#66-datageneratesyntheticpy--reference-dataset)
-   - 6.7 [`workloads/*.yaml` - workload profiles](#67-workloadsyaml--workload-profiles)
-   - 6.8 [`examples/` - platform-specific guides](#68-examples--platform-specific-guides)
-   - 6.9 [`results/` - collected and reference data](#69-results--collected-and-reference-data)
-7. [Key findings from the validation run](#7-key-findings-from-the-validation-run)
-8. [Project structure](#8-project-structure)
-9. [Data lifecycle and gitignore](#9-data-lifecycle-and-gitignore)
-10. [Contributing](#10-contributing)
-11. [License](#11-license)
+6. [Capacity Planner](#6-capacity-planner)
+   - 6.1 [Quick start – capacity planner CLI](#61-quick-start--capacity-planner-cli)
+   - 6.2 [Quick start – API + UI](#62-quick-start--api--ui)
+   - 6.3 [`planner/` modules](#63-planner-modules)
+   - 6.4 [`api/` – REST endpoints](#64-api--rest-endpoints)
+   - 6.5 [`catalog/` – GPU and model catalog](#65-catalog--gpu-and-model-catalog)
+   - 6.6 [`ui/` – four-screen web interface](#66-ui--four-screen-web-interface)
+7. [Components](#7-components)
+   - 7.1 [`collect/run_bench.py` - the benchmark harness](#71-collectrunbenchpy--the-benchmark-harness)
+   - 7.2 [`analyze/report.py` - Markdown report generator](#72-analyzereportpy--markdown-report-generator)
+   - 7.3 [`playbook/advisor.py` - config recommendation engine](#73-playbookadvisorpy--config-recommendation-engine)
+   - 7.4 [`evaluate/run_eval.py` - quality evaluator](#74-evaluaterunevalpy--quality-evaluator)
+   - 7.5 [`analyze/deployment_advisor.py` - deployment decision engine](#75-analyzedeploymentadvisorpy--deployment-decision-engine)
+   - 7.6 [`data/generate_synthetic.py` - reference dataset](#76-datageneratesyntheticpy--reference-dataset)
+   - 7.7 [`workloads/*.yaml` - workload profiles](#77-workloadsyaml--workload-profiles)
+   - 7.8 [`examples/` - platform-specific guides](#78-examples--platform-specific-guides)
+   - 7.9 [`results/` - collected and reference data](#79-results--collected-and-reference-data)
+8. [Key findings from the validation run](#8-key-findings-from-the-validation-run)
+9. [Project structure](#9-project-structure)
+10. [Data lifecycle and gitignore](#10-data-lifecycle-and-gitignore)
+11. [Contributing](#11-contributing)
+12. [License](#12-license)
 
 ---
 
 ## 1. The problem
 
-Every team running an LLM in production eventually hits the same wall:
+LLM inference deployments fail in three distinct ways, at three distinct stages:
 
-> *"Our model is slow / expensive / unreliable under load. What knob do we turn?"*
+**Before you have hardware:**
 
-The vLLM and SGLang documentation list **dozens** of tuning flags - `max-num-seqs`,
-`enable-chunked-prefill`, `enable-prefix-caching`, `tensor-parallel-size`, `kv-cache-fraction`, `swap-space`, and so on. Most public guidance is generic ("enable chunked
-prefill for long contexts") and doesn't account for the specific **GPU**, **model
-precision**, and **workload shape** in front of you.
+> *"We need to provision GPUs for our new LLM feature. How many do we need?"*
 
-The result: engineers either (a) cargo-cult a config from a blog post, (b) over-
-provision hardware to compensate, or (c) spend weeks running ad-hoc benchmarks
-with one-off scripts.
+Nobody has a good answer. The capacity estimate is usually a gut feeling, a competitor's blog post, or a spreadsheet built on single-request latency numbers that have nothing to do with concurrent production traffic. Teams either under-provision (SLO misses on day one) or over-provision by 2–3× to buy safety margin — wasting tens of thousands of dollars per month.
 
-This project answers the question that every ML platform engineer and solutions
-architect faces:
+**When you have hardware but no config:**
 
-> **"For *my* workload and *my* hardware, what vLLM configuration actually matters
-> - and how do I measure it?"**
+> *"Which of these 40 vLLM flags actually matter for my model and GPU?"*
 
-It does so by combining three things:
+The documentation lists `max-num-seqs`, `enable-chunked-prefill`, `enable-prefix-caching`, `tensor-parallel-size`, `kv-cache-fraction`, and more. Generic guidance ("enable chunked prefill for long contexts") ignores the specific interaction between GPU memory bandwidth, model precision, and workload shape. Real data — L4 FP8, `max-num-seqs` 8 → 128 — shows a **172× TTFT improvement** that no blog post would have predicted.
 
-1. A **measurement tool** that fires realistic, concurrent load at any
-   OpenAI-compatible endpoint and captures TTFT, throughput, and failure rate.
-2. An **analysis layer** that turns raw measurements into a comparison report.
-3. A **recommendation engine** whose rules are anchored in real benchmark data
-   (NVIDIA L4 + Llama 3.1 8B FP8, validated on Red Hat OpenShift AI) - not
-   blog-post intuition.
+**When you're choosing between deployment options:**
+
+> *"FP8 is 40% faster and 30% cheaper than FP16 — but is the quality still acceptable?"*
+
+Most teams never check. They pick the fastest or cheapest option and ship it. Quality degradation from aggressive quantization shows up later, in user complaints, not in a benchmark report.
+
+---
+
+This tool solves all three. It gives every ML platform engineer and solutions architect a structured, measurement-driven path from *"we need to serve this model"* to *"this is our validated production config"*:
+
+1. A **capacity planner** that estimates replicas and cost from a business workload spec — no GPU required.
+2. A **benchmark harness** that fires realistic concurrent load at any OpenAI-compatible endpoint and produces a structured, reproducible result.
+3. A **deployment advisor** whose recommendations are anchored in real measured data (NVIDIA L4 + Llama 3.1 8B FP8, validated on Red Hat OpenShift AI) and account for quality alongside latency and cost.
 
 ---
 
 ## 2. What this tool does
 
-- **Measures** time-to-first-token (p50/p95/p99), end-to-end latency, throughput
-  (tokens/s and requests/s), and failure rate against any streaming
-  `/v1/completions` endpoint.
-- **Analyzes** results across runs and produces a deployable Markdown report that
-  surfaces ISL impact, the `max-num-seqs` sweep, concurrency scaling, chunked
-  prefill comparison, and prefix-cache wins.
-- **Recommends** a concrete vLLM configuration (`--max-num-seqs`,
-  `--enable-chunked-prefill`, `--enable-prefix-caching`, replica count) for a
-  given workload + hardware combination via a small, transparent rule engine.
-- **Evaluates quality** against real eval prompts (50–500 samples) and produces a
-  quality sidecar JSON linked to the latency result. Then **recommends** the best
-  deployment balancing latency, cost, and quality - not just the fastest one.
-- **Stays platform-agnostic.** The core harness has no notion of "vLLM" or
-  "Baseten" or "RHOAI" - it only knows OpenAI-compatible streaming. Platform
-  specifics live under `examples/`.
+**Plan** — before you have a GPU:
+
+- Describe your workload: requests/day, input/output token lengths, TTFT SLO, traffic class
+- Get back: recommended replica count, low/high range, binding constraint (`compute`, `bandwidth`, or `kv_budget`), cost envelope (on-demand + 1-yr reserved), and a confidence level with an explicit uncertainty band (HIGH ±10%, MEDIUM ±25%, LOW ±50%)
+- Get a prioritized benchmark plan — ordered CLI commands that collapse the biggest uncertainty first
+
+**Measure** — against a real endpoint:
+
+- Fires realistic concurrent load (`--concurrency` async workers for `--duration` seconds) at any streaming `/v1/completions` endpoint
+- Captures TTFT (p50/p95/p99), end-to-end latency, throughput (tokens/s, req/s), and failure rate
+- Embeds the full environment contract in every result file (GPU, model, precision, workload shape) so runs are reproducible and comparable
+- Runs a separate quality evaluation pass (50–500 eval prompts at low concurrency) to score answer relevancy, correctness, faithfulness, and hallucination rate
+
+**Decide** — across deployment options:
+
+- Compares configurations on latency, cost, and quality simultaneously
+- Eliminates options that fall below a quality threshold — not just the slowest ones
+- Recommends a concrete vLLM config (`--max-num-seqs`, `--enable-chunked-prefill`, `--enable-prefix-caching`, replica count) grounded in real benchmark data
+- Produces a Markdown report with a validation badge (`estimate_only` → `partially_validated` → `validated_by_benchmark`) that reflects how much real GPU evidence backs the recommendation
+
+**Deploy anywhere** — the harness has no coupling to any platform. It speaks OpenAI-compatible streaming. Platform specifics (vLLM local, Baseten, RHOAI) live under `examples/` and the hosted web app works with any endpoint URL.
 
 ---
 
@@ -159,12 +167,16 @@ python collect/run_bench.py \
 python analyze/report.py --output report.md
 ```
 
-For authenticated endpoints (Baseten, RHOAI with auth enabled, cloud-managed
-inference), add `--token $API_KEY`. The benchmark adds a `Bearer` header only
-when `--token` is provided, so it works with both authenticated and open endpoints
-from the same script.
+For authenticated endpoints, pass one of:
 
-See the [platform guides](#68-examples--platform-specific-guides) for full
+```bash
+--token $API_KEY          # Bearer token (Baseten, RHOAI, cloud-managed)
+--basic-auth user:pass    # HTTP Basic Auth (self-hosted with nginx proxy, etc.)
+```
+
+Both flags are optional; omit both for open endpoints.
+
+See the [platform guides](#78-examples--platform-specific-guides) for full
 walkthroughs against local vLLM, Baseten, and RHOAI.
 
 ---
@@ -248,15 +260,113 @@ Use `--dry-run` on either script to validate inputs without hitting endpoints or
 
 ---
 
-## 6. Components
+## 6. Capacity Planner
 
-The repo has five executable pieces (`run_bench`, `report`, `advisor`,
-`generate_synthetic`, plus the example assets). They are intentionally
-**decoupled** - the benchmark writes JSON, everything else reads it. This means
-the GPU is only needed for data collection; analysis and recommendations run
-anywhere.
+Size a deployment *before* you have a GPU. Given a business workload description (requests/day, ISL, OSL, TTFT SLO, traffic class), the planner applies a roofline model to estimate replica count, cost envelope, and confidence level, then generates an ordered benchmark plan to validate the estimate. When benchmark runs complete, `ingest_anchor.py` calibrates the model with real GPU data, upgrading confidence from LOW → MEDIUM → HIGH.
 
-### 6.1 `collect/run_bench.py` - the benchmark harness
+### 6.1 Quick start – capacity planner CLI
+
+```bash
+pip install -r requirements.txt
+
+python planner/capacity.py \
+  --model llama-3.1-8b --gpu h100_sxm --dtype fp8 \
+  --requests-per-day 50000 --isl 1024 --osl 256 \
+  --ttft-slo-ms 500 --traffic-class realtime
+```
+
+Output: recommended replicas, confidence level (HIGH / MEDIUM / LOW), TTFT estimate (ms), max concurrent sequences (KV budget), and the binding constraint (`compute`, `bandwidth`, or `kv_budget`).
+
+To compare multiple GPU/dtype configurations head-to-head:
+
+```bash
+python planner/compare.py --configs configs.json
+```
+
+Output: cheapest configuration, safest (highest confidence), best latency — with tradeoff notes (e.g., H200 vs H100 KV budget delta).
+
+### 6.2 Quick start – API + UI
+
+```bash
+# Terminal 1 – start the API
+uvicorn api.main:app --reload
+
+# Terminal 2 – start the UI
+cd ui && npm install && npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The four-screen UI guides you through the full planning workflow.
+
+| Screen | Route | Purpose |
+| --- | --- | --- |
+| Scenario Builder | `/` | Workload description + GPU/model/dtype selection; supports catalog models and custom model spec |
+| Estimate | `/estimate` | Replica range chart (low/recommended/high), confidence badge, binding constraint, warnings |
+| Benchmark Plan | `/benchmark-plan` | Prioritized test matrix with copy-ready `run_bench.py` commands and rationale |
+| Report | `/report` | Recommendation summary, validation status badge, export to Markdown |
+
+### 6.3 `planner/` modules
+
+| Module | Role |
+| --- | --- |
+| `planner/capacity.py` | Roofline model — separate prefill (compute-bound) and decode (bandwidth-bound) phases; outputs replicas, TTFT estimate, KV budget |
+| `planner/cost.py` | On-demand and 1-yr reserved cost envelope; reads pricing from `catalog/pricing.yaml` |
+| `planner/benchmark_plan.py` | Ordered test matrix — ISL sweep, concurrency sweep, precision comparison, KV cache validation |
+| `planner/confidence.py` | Three-tier rubric: HIGH (±10%), MEDIUM (±25%), LOW (±50%); `geometry_source="estimated"` downgrades one level |
+| `planner/ingest_anchor.py` | Reads a completed benchmark JSON and writes a calibration anchor to `catalog/anchors.yaml` |
+| `planner/compare.py` | Multi-config comparison: cheapest (cost_day_usd or replica proxy), safest (confidence rank × band), best latency |
+| `planner/report.py` | Markdown report with mode badge (`estimate_only` / `partially_validated` / `validated_by_benchmark`) |
+
+### 6.4 `api/` – REST endpoints
+
+A FastAPI application with SQLite persistence (Postgres-ready). Start with `uvicorn api.main:app`. Uses `create_app()` factory pattern for test isolation — tests inject a `tmp_path` SQLite URL, not the production database.
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /scenarios` | Create a new planning scenario |
+| `GET /scenarios/{id}` | Fetch a scenario |
+| `POST /scenarios/{id}/estimate` | Run the roofline estimator; stores result |
+| `GET /scenarios/{id}/benchmark-plan` | Generate the ordered benchmark plan |
+| `POST /benchmarks/run` | Enqueue a benchmark run as a background task |
+| `GET /benchmarks/{run_id}` | Poll job status (`queued` / `running` / `done` / `failed`) |
+| `POST /ingest/{run_id}` | Ingest a completed run into the anchor catalog |
+| `GET /scenarios/{id}/recommendation` | Final recommendation; `mode` escalates automatically as benchmark runs complete |
+| `GET /scenarios/{id}/report` | Fetch the Markdown report |
+
+### 6.5 `catalog/` – GPU and model catalog
+
+YAML files under `catalog/` contain the hardware and pricing data the planner reads at runtime. No hardcoded specs in code.
+
+| File | Contents |
+| --- | --- |
+| `catalog/gpus.yaml` | Peak FLOPS, memory bandwidth, VRAM, and MFU estimate for each GPU SKU |
+| `catalog/models.yaml` | Parameter count, hidden dim, layer count, KV head count per model |
+| `catalog/pricing.yaml` | On-demand and 1-yr reserved cost per GPU-hour by provider/region |
+| `catalog/anchors.yaml` | Measured throughput anchors written by `ingest_anchor.py` |
+
+Five GPU SKUs shipped: `h100_sxm`, `h200_sxm`, `a100_80gb_sxm`, `l40s`, `l4`.
+
+### 6.6 `ui/` – four-screen web interface
+
+Next.js 14 (App Router) + Tailwind CSS + Recharts. Rewrites `/api/*` to the FastAPI server at `http://localhost:8000`.
+
+Key components:
+
+| Component | Purpose |
+| --- | --- |
+| `ReplicaRangeChart` | Recharts bar chart with confidence-colored bars (low/recommended/high) and a reference line at the recommended value |
+| `ConfidenceBadge` | Shows level + band percentage, color-coded green/yellow/red |
+| `ModeBadge` | Validation status — yellow (`estimate_only`), blue (`partially_validated`), green (`validated_by_benchmark`) |
+| `CopyButton` | Clipboard copy with 1.5 s "✓ Copied" confirmation |
+
+---
+
+## 7. Components
+
+The benchmark and analysis layer has nine components. They are intentionally
+**decoupled** - each writes JSON, everything downstream reads it. The GPU is
+only needed for data collection; analysis and recommendations run anywhere.
+
+### 7.1 `collect/run_bench.py` - the benchmark harness
 
 The only component that needs a network connection to a model.
 
@@ -331,7 +441,7 @@ it captures:
   review) simulate realistic enterprise workloads. Synthetic lorem ipsum
   changes prefill cost characteristics and produces misleading numbers.
 
-### 6.2 `analyze/report.py` - Markdown report generator
+### 7.2 `analyze/report.py` - Markdown report generator
 
 Reads every JSON file under `results/real/` and `results/synthetic/` and emits
 a single Markdown report. **Real measurements override synthetic rows that
@@ -361,7 +471,7 @@ reference quietly steps out of the way.
 
 **Stdlib only.** No dependencies. Runs anywhere Python 3.9+ runs.
 
-### 6.3 `playbook/advisor.py` - config recommendation engine
+### 7.3 `playbook/advisor.py` - config recommendation engine
 
 A small CLI rule engine that converts a workload description into a concrete
 vLLM configuration. **Every rule is grounded in real benchmark data**, with
@@ -403,7 +513,7 @@ the source cited inline in the rationale string.
 - `gpu=l4` + `precision=fp16` - VRAM pressure for 8B+ models.
 - `scale=realtime` + `isl>4096` - prefill alone may exceed the latency budget.
 
-### 6.4 `evaluate/run_eval.py` - quality evaluator
+### 7.4 `evaluate/run_eval.py` - quality evaluator
 
 Sends eval dataset prompts to an inference endpoint at low concurrency (5 workers), scores responses with DeepEval or an LLM judge, and writes a quality sidecar JSON to `results/quality/<tag>.json`.
 
@@ -436,7 +546,7 @@ Sends eval dataset prompts to an inference endpoint at low concurrency (5 worker
 
 **Dataset validation.** `load_dataset` requires `schema_version: 1` in every row - any other value is a hard error. Valid workloads: `"chat"`, `"rag"`, `"long_context"`.
 
-### 6.5 `analyze/deployment_advisor.py` - deployment decision engine
+### 7.5 `analyze/deployment_advisor.py` - deployment decision engine
 
 Answers: **"Given my quality requirements and cost constraints, which deployment should I choose?"**
 
@@ -491,7 +601,7 @@ Loads latency results and quality sidecars for each tag, computes relative delta
 
 **Relation to `playbook/advisor.py`.** The playbook advisor answers "what vLLM flags should I use?" The deployment advisor answers "which quantization / precision / configuration should I deploy?" Two advisors, two levels of the stack - neither replaces the other.
 
-### 6.6 `data/generate_synthetic.py` - reference dataset
+### 7.6 `data/generate_synthetic.py` - reference dataset
 
 Generates ~23 JSON files under `results/synthetic/` containing scenarios that
 are too expensive or impractical to measure on every workstation: A100/H100
@@ -515,7 +625,7 @@ When real data overrides a synthetic row, the report quietly upgrades. This
 gives newcomers a complete-looking dataset on day 1 and a path to displace
 synthetics with real measurements over time.
 
-### 6.7 `workloads/*.yaml` - workload profiles
+### 7.7 `workloads/*.yaml` - workload profiles
 
 Three YAML workload profiles you can pass directly to `advisor.py` (or use as
 config inputs in your own tooling):
@@ -529,7 +639,7 @@ config inputs in your own tooling):
 Each file also records the baseline L4/FP8 measurement for that profile so
 you can sanity-check your own numbers against the validation run.
 
-### 6.8 `examples/` - platform-specific guides
+### 7.8 `examples/` - platform-specific guides
 
 The benchmark harness is generic; deployment platforms aren't. These guides
 get you from "I have an account" to "I have a benchmark JSON" on each
@@ -551,12 +661,12 @@ platform:
   - [`examples/rhoai/serving_runtime.yaml`](examples/rhoai/serving_runtime.yaml) - the RHAIIS `ServingRuntime`
   - [`examples/rhoai/isvc.yaml`](examples/rhoai/isvc.yaml) - the `InferenceService` deploying Llama 3.1 8B FP8 from an OCI registry
 
-### 6.9 `results/` - collected and reference data
+### 7.9 `results/` - collected and reference data
 
 Two siblings:
 
 - `results/real/` - populated by `run_bench.py`. Gitignored by default (see
-  [section 9](#9-data-lifecycle-and-gitignore)). Each file represents one
+  [section 10](#10-data-lifecycle-and-gitignore)). Each file represents one
   benchmark run.
 - `results/synthetic/` - populated by `generate_synthetic.py`. Committed to
   the repo so a fresh clone has working data immediately.
@@ -566,7 +676,7 @@ real measurement wins.
 
 ---
 
-## 7. Key findings from the validation run
+## 8. Key findings from the validation run
 
 Validated on **NVIDIA L4 + Llama 3.1 8B FP8** via Red Hat OpenShift AI. See
 [BENCHMARK_FINDINGS.md](BENCHMARK_FINDINGS.md) for the full study including
@@ -586,14 +696,53 @@ infrastructure setup, experiment design, and per-run numbers.
 
 ---
 
-## 8. Project structure
+## 9. Project structure
 
 ```text
 llm-inference-bench/
 ├── README.md                       # this file
 ├── BENCHMARK_FINDINGS.md           # full L4/FP8 validation study
-├── requirements.txt                # aiohttp only - used by run_bench.py
+├── requirements.txt                # aiohttp, fastapi, sqlalchemy, deepeval, pydantic, uvicorn
 ├── .gitignore
+│
+├── catalog/                        # GPU, model, and pricing specs (YAML, read at runtime)
+│   ├── gpus.yaml                   # FLOPS, bandwidth, VRAM, MFU for h100/h200/a100/l40s/l4
+│   ├── models.yaml                 # params, hidden dim, layers, KV heads
+│   ├── pricing.yaml                # on-demand + 1-yr reserved cost per GPU-hour
+│   └── anchors.yaml                # measured throughput anchors; updated by ingest_anchor.py
+│
+├── planner/                        # capacity planner — pure Python, no GPU needed
+│   ├── capacity.py                 # roofline model: prefill + decode → replicas, TTFT, KV budget
+│   ├── cost.py                     # cost envelope from catalog/pricing.yaml
+│   ├── benchmark_plan.py           # ordered test matrix generator
+│   ├── confidence.py               # HIGH/MEDIUM/LOW confidence rubric (±10%/25%/50%)
+│   ├── ingest_anchor.py            # ingest benchmark result → calibration anchor
+│   ├── compare.py                  # multi-config comparison (cheapest/safest/best-latency)
+│   └── report.py                   # Markdown report with mode badge
+│
+├── api/                            # FastAPI REST layer with SQLite persistence
+│   ├── __init__.py
+│   ├── db.py                       # SQLAlchemy 2.0 ORM models (Scenario, Estimate, Run, …)
+│   ├── schemas.py                  # Pydantic v2 request/response schemas
+│   ├── jobs.py                     # background benchmark subprocess runner
+│   └── main.py                     # create_app() factory + 9 endpoints
+│
+├── ui/                             # Next.js 14 App Router + Tailwind + Recharts
+│   ├── package.json
+│   ├── next.config.mjs             # rewrites /api/* → http://localhost:8000
+│   ├── app/
+│   │   ├── page.tsx                # Screen 1: Scenario Builder
+│   │   ├── estimate/page.tsx       # Screen 2: Replica range chart + confidence
+│   │   ├── benchmark-plan/page.tsx # Screen 3: Prioritized test matrix
+│   │   └── report/page.tsx         # Screen 4: Recommendation + Markdown export
+│   ├── lib/
+│   │   ├── api.ts                  # API client functions
+│   │   └── types.ts                # TypeScript interfaces + catalog constants
+│   └── components/
+│       ├── ConfidenceBadge.tsx
+│       ├── ModeBadge.tsx
+│       ├── ReplicaRangeChart.tsx
+│       └── CopyButton.tsx
 │
 ├── collect/
 │   └── run_bench.py                # async benchmark; OpenAI-compatible; streaming TTFT
@@ -621,6 +770,17 @@ llm-inference-bench/
 │   ├── rag.yaml                    # mixed, ISL=2048, SLA=700ms
 │   └── long_context.yaml           # batch, ISL=4096, SLA=2000ms
 │
+├── tests/                          # 268 tests total
+│   ├── test_run_eval.py            # 17 tests: quality evaluator
+│   ├── test_deployment_advisor.py  # 27 tests: deployment advisor
+│   ├── test_capacity.py            # 28 tests: roofline model
+│   ├── test_cost.py                # 18 tests: cost estimation
+│   ├── test_benchmark_plan.py      # 21 tests: test matrix generation
+│   ├── test_confidence.py          # 22 tests: confidence rubric + ingest
+│   ├── test_api.py                 # 34 tests: FastAPI acceptance tests
+│   ├── test_compare.py             # 26 tests: multi-config comparison
+│   └── test_report.py              # 17 tests: Markdown report generator
+│
 ├── results/
 │   ├── real/                       # populated by run_bench.py (gitignored)
 │   │   └── .gitkeep
@@ -641,7 +801,7 @@ llm-inference-bench/
 
 ---
 
-## 9. Data lifecycle and gitignore
+## 10. Data lifecycle and gitignore
 
 `results/real/*.json` is **gitignored by default** to keep the repo small and
 avoid leaking sensitive endpoint identifiers in result metadata. The
@@ -657,7 +817,7 @@ out of the box.
 
 ---
 
-## 10. Contributing
+## 11. Contributing
 
 PRs welcome. Two principles:
 
@@ -679,6 +839,6 @@ else is stdlib-only.
 
 ---
 
-## 11. License
+## 12. License
 
 Apache 2.0.

@@ -1,0 +1,25 @@
+# catalog/costs.yaml
+# GPU $/hour. These are REPRESENTATIVE 2026 cloud on-demand figures and vary widely by
+# provider, region, commitment, and spot/reserved terms. TREAT AS DEFAULTS TO OVERRIDE —
+# the planner should let the user set the actual contract price per scenario. Cost output
+# is only as good as these inputs, so the report must echo which price it used.
+
+h100_sxm:
+  on_demand_usd_per_hour: 3.00
+  reserved_usd_per_hour: 2.00
+
+h200_sxm:
+  on_demand_usd_per_hour: 4.00
+  reserved_usd_per_hour: 2.75
+
+a100_80gb_sxm:
+  on_demand_usd_per_hour: 1.80
+  reserved_usd_per_hour: 1.20
+
+l40s:
+  on_demand_usd_per_hour: 1.10
+  reserved_usd_per_hour: 0.80
+
+l4:
+  on_demand_usd_per_hour: 0.70
+  reserved_usd_per_hour: 0.50

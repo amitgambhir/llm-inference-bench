@@ -27,6 +27,7 @@ except ImportError:
 ENDPOINT = ""
 MODEL = ""
 TOKEN = ""
+BASIC_AUTH: "aiohttp.BasicAuth | None" = None
 USE_SHARED_PREFIX = False
 
 
@@ -186,6 +187,7 @@ async def one_request(session, osl, prompt, results, fails):
     headers = {"Content-Type": "application/json"}
     if TOKEN:
         headers["Authorization"] = "Bearer " + TOKEN
+    auth = BASIC_AUTH
     payload = {
         "model": MODEL,
         "prompt": prompt,
@@ -196,7 +198,7 @@ async def one_request(session, osl, prompt, results, fails):
     t0 = time.perf_counter()
     ttft = None
     try:
-        async with session.post(ENDPOINT, json=payload, headers=headers) as resp:
+        async with session.post(ENDPOINT, json=payload, headers=headers, auth=auth) as resp:
             if resp.status != 200:
                 fails.append(resp.status)
                 return
@@ -247,7 +249,7 @@ def percentile(values, p):
 
 
 async def main():
-    global ENDPOINT, MODEL, TOKEN, USE_SHARED_PREFIX
+    global ENDPOINT, MODEL, TOKEN, BASIC_AUTH, USE_SHARED_PREFIX
 
     ap = argparse.ArgumentParser(description="LLM inference benchmark")
     ap.add_argument("--endpoint", default="http://localhost:8000/v1/completions")
@@ -259,6 +261,8 @@ async def main():
     ap.add_argument("--tag", required=True)
     ap.add_argument("--runtime", default="vllm")
     ap.add_argument("--token", default="")
+    ap.add_argument("--basic-auth", default="", metavar="USER:PASS",
+                    help="HTTP Basic Auth credentials in user:pass format")
     ap.add_argument("--chunked-prefill", action="store_true")
     ap.add_argument("--shared-prefix", action="store_true")
     ap.add_argument("--output-dir", default="./results/real")
@@ -268,6 +272,9 @@ async def main():
     MODEL = args.model
     TOKEN = args.token
     USE_SHARED_PREFIX = args.shared_prefix
+    if args.basic_auth:
+        user, _, password = args.basic_auth.partition(":")
+        BASIC_AUTH = aiohttp.BasicAuth(user, password)
 
     output_dir = os.path.expanduser(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)

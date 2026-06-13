@@ -1,0 +1,74 @@
+# catalog/gpus.yaml
+# Curated GPU registry. UI exposes these as a dropdown only — no spec fields shown to end users.
+# Adding a new card = add a row here (a quick reviewed edit). Default GPU = h100_sxm.
+#
+# peak_flops are DENSE tensor-core TFLOP/s (NO structured sparsity). NVIDIA's marketing
+# figures lead with sparsity-enabled numbers (2x these) — do NOT use those for a roofline.
+# Values verified against NVIDIA datasheets (H100/H200/A100) and vendor spec pages (L40S/L4), 2026.
+#
+# Note on mxfp4: only Blackwell (B200+) has native FP4 tensor cores. On Hopper/Ampere/Ada,
+# MXFP4 weights are dequantized and the matmul runs through the FP8/BF16 path, so the mxfp4
+# ceiling here tracks the fp8 (or bf16 where no fp8) number. Calibrate with a measured anchor.
+
+h100_sxm:
+  display_name: "NVIDIA H100 SXM"
+  mem_gb: 80                          # HBM3
+  hbm_bandwidth_gbps: 3350            # 3.35 TB/s
+  peak_flops:                         # TFLOP/s, dense
+    fp16: 989
+    bf16: 989
+    fp8: 1979
+    mxfp4: 1979                       # Hopper: no native FP4; runs via FP8 path
+  default_mfu_prefill: 0.40           # fallback when no anchor exists
+  default_bw_efficiency_decode: 0.70
+
+h200_sxm:
+  display_name: "NVIDIA H200 SXM"
+  mem_gb: 141                         # HBM3e — far larger KV budget than H100
+  hbm_bandwidth_gbps: 4800            # 4.8 TB/s
+  peak_flops:                         # same GH100 die as H100 → identical compute
+    fp16: 989
+    bf16: 989
+    fp8: 1979
+    mxfp4: 1979
+  default_mfu_prefill: 0.40
+  default_bw_efficiency_decode: 0.70
+
+a100_80gb_sxm:
+  display_name: "NVIDIA A100 80GB SXM4"
+  mem_gb: 80                          # HBM2e
+  hbm_bandwidth_gbps: 2039            # SXM4 (PCIe variant is 1935)
+  peak_flops:                         # Ampere — NO native FP8
+    fp16: 312
+    bf16: 312
+    mxfp4: 312                        # dequant to bf16; Ampere has no fp8/fp4
+  default_mfu_prefill: 0.45           # HBM-rich; often higher realized MFU at low precision
+  default_bw_efficiency_decode: 0.70
+
+l40s:
+  display_name: "NVIDIA L40S"
+  mem_gb: 48                          # GDDR6
+  hbm_bandwidth_gbps: 864             # GDDR6 — much lower BW than HBM parts
+  peak_flops:                         # Ada Lovelace
+    fp16: 362
+    bf16: 362
+    fp8: 733
+    mxfp4: 733                        # Ada: no native FP4; runs via FP8 path
+  default_mfu_prefill: 0.40
+  default_bw_efficiency_decode: 0.65  # GDDR6 realizes a bit less of peak than HBM
+
+l4:
+  display_name: "NVIDIA L4"
+  mem_gb: 24                          # GDDR6
+  hbm_bandwidth_gbps: 300
+  peak_flops:                         # Ada Lovelace
+    fp16: 121
+    bf16: 121
+    fp8: 242
+    mxfp4: 242
+  default_mfu_prefill: 0.40
+  default_bw_efficiency_decode: 0.65
+  # ^ This card backs the seeded anchors in anchors.yaml (real L4/FP8 validation run).
+
+# To add e.g. B200: same shape, with native FP4 — mxfp4 would carry its own (higher) number,
+# not track fp8. MI300X (CDNA3, 192GB HBM3, ~5.3 TB/s) also fits this schema.
