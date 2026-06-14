@@ -16,7 +16,7 @@ Ships as a **web app** (Next.js + FastAPI, deployable on Vercel + Render in minu
 
 | Stage | What you get |
 | --- | --- |
-| Before hardware | Replica count, cost envelope (on-demand + reserved), confidence level (HIGH/MEDIUM/LOW), calibrated benchmark plan |
+| Before hardware | Replica count, cost envelope (on-demand + reserved), confidence level (HIGH/MEDIUM/DEFAULT), calibrated benchmark plan |
 | After benchmarking | Validated latency profiles (TTFT p50/p95/p99, throughput, failure rate), upgraded confidence |
 | Deployment decision | Ranked recommendation across latency, cost, and quality — with eliminated options explained |
 
@@ -311,7 +311,10 @@ Open [http://localhost:3000](http://localhost:3000). The four-screen UI guides y
 | `planner/capacity.py` | Roofline model — separate prefill (compute-bound) and decode (bandwidth-bound) phases; outputs replicas, TTFT estimate, KV budget |
 | `planner/cost.py` | On-demand and 1-yr reserved cost envelope; reads pricing from `catalog/pricing.yaml` |
 | `planner/benchmark_plan.py` | Ordered test matrix — ISL sweep, concurrency sweep, precision comparison, KV cache validation |
-| `planner/confidence.py` | Three-tier rubric: HIGH (±10%), MEDIUM (±25%), LOW (±50%); `geometry_source="estimated"` downgrades one level |
+| `planner/confidence.py` | Three-tier rubric: HIGH (±10%), MEDIUM (±20%), DEFAULT (±25%); `geometry_source="estimated"` downgrades one level |
+| `planner/efficiency.py` | Regime-aware MFU and bandwidth efficiency curves — `mfu_prefill` (model size + ISL + MoE) and `bw_eff_decode` (batch + KV-ratio) |
+| `planner/efficiency_constants.yaml` | Tunable constants for efficiency curves; calibrated by `validate.fit()` against public benchmarks |
+| `planner/validate.py` | Fit and validate efficiency curves against `catalog/benchmarks_public.yaml`; `fit()` writes back updated constants |
 | `planner/ingest_anchor.py` | Reads a completed benchmark JSON and writes a calibration anchor to `catalog/anchors.yaml` |
 | `planner/compare.py` | Multi-config comparison: cheapest (cost_day_usd or replica proxy), safest (confidence rank × band), best latency |
 | `planner/report.py` | Markdown report with mode badge (`estimate_only` / `partially_validated` / `validated_by_benchmark`) |
@@ -338,10 +341,12 @@ YAML files under `catalog/` contain the hardware and pricing data the planner re
 
 | File | Contents |
 | --- | --- |
-| `catalog/gpus.yaml` | Peak FLOPS, memory bandwidth, VRAM, and MFU estimate for each GPU SKU |
-| `catalog/models.yaml` | Parameter count, hidden dim, layer count, KV head count per model |
+| `catalog/gpus.yaml` | Peak FLOPS, memory bandwidth, VRAM, arch, memory_type, and MFU defaults for each GPU SKU |
+| `catalog/models.yaml` | Parameter count, hidden dim, layer count, KV heads — includes llama-3.1-8b/70b, llama-3.3-70b, llama-4-maverick, gpt-oss-20b |
 | `catalog/pricing.yaml` | On-demand and 1-yr reserved cost per GPU-hour by provider/region |
 | `catalog/anchors.yaml` | Measured throughput anchors written by `ingest_anchor.py` |
+| `catalog/benchmarks_public.yaml` | Public benchmark points (schema v2) — vLLM `level`, TRT-LLM `shape`, and `sanity` points used by `validate.fit()` |
+| `catalog/runtimes.yaml` | Supported runtime engines with display names and engine confound notes |
 
 Five GPU SKUs shipped: `h100_sxm`, `h200_sxm`, `a100_80gb_sxm`, `l40s`, `l4`.
 
@@ -706,16 +711,21 @@ llm-inference-bench/
 ├── .gitignore
 │
 ├── catalog/                        # GPU, model, and pricing specs (YAML, read at runtime)
-│   ├── gpus.yaml                   # FLOPS, bandwidth, VRAM, MFU for h100/h200/a100/l40s/l4
-│   ├── models.yaml                 # params, hidden dim, layers, KV heads
+│   ├── gpus.yaml                   # FLOPS, bandwidth, VRAM, arch, memory_type for h100/h200/a100/l40s/l4
+│   ├── models.yaml                 # params, hidden dim, layers, KV heads (llama-3.1/3.3/4-maverick, gpt-oss-20b)
 │   ├── pricing.yaml                # on-demand + 1-yr reserved cost per GPU-hour
-│   └── anchors.yaml                # measured throughput anchors; updated by ingest_anchor.py
+│   ├── anchors.yaml                # measured throughput anchors; updated by ingest_anchor.py
+│   ├── benchmarks_public.yaml      # public benchmark points (schema v2) for efficiency curve fitting
+│   └── runtimes.yaml               # supported inference engines (vLLM, TRT-LLM, SGLang)
 │
 ├── planner/                        # capacity planner — pure Python, no GPU needed
 │   ├── capacity.py                 # roofline model: prefill + decode → replicas, TTFT, KV budget
 │   ├── cost.py                     # cost envelope from catalog/pricing.yaml
 │   ├── benchmark_plan.py           # ordered test matrix generator
-│   ├── confidence.py               # HIGH/MEDIUM/LOW confidence rubric (±10%/25%/50%)
+│   ├── confidence.py               # HIGH/MEDIUM/DEFAULT confidence rubric (±10%/20%/25%)
+│   ├── efficiency.py               # regime-aware MFU + bw_eff curves (mfu_prefill, bw_eff_decode)
+│   ├── efficiency_constants.yaml   # tunable curve constants; recalibrated by validate.fit()
+│   ├── validate.py                 # fit() + report() against catalog/benchmarks_public.yaml
 │   ├── ingest_anchor.py            # ingest benchmark result → calibration anchor
 │   ├── compare.py                  # multi-config comparison (cheapest/safest/best-latency)
 │   └── report.py                   # Markdown report with mode badge
@@ -770,16 +780,19 @@ llm-inference-bench/
 │   ├── rag.yaml                    # mixed, ISL=2048, SLA=700ms
 │   └── long_context.yaml           # batch, ISL=4096, SLA=2000ms
 │
-├── tests/                          # 268 tests total
-│   ├── test_run_eval.py            # 17 tests: quality evaluator
-│   ├── test_deployment_advisor.py  # 27 tests: deployment advisor
-│   ├── test_capacity.py            # 28 tests: roofline model
-│   ├── test_cost.py                # 18 tests: cost estimation
-│   ├── test_benchmark_plan.py      # 21 tests: test matrix generation
-│   ├── test_confidence.py          # 22 tests: confidence rubric + ingest
-│   ├── test_api.py                 # 34 tests: FastAPI acceptance tests
-│   ├── test_compare.py             # 26 tests: multi-config comparison
-│   └── test_report.py              # 17 tests: Markdown report generator
+├── tests/                          # 305 tests total
+│   ├── test_capacity.py            # 55 tests: roofline model, prefill/decode phases, KV budget
+│   ├── test_api.py                 # 35 tests: FastAPI acceptance tests with isolated SQLite
+│   ├── test_ingest_anchor.py       # 29 tests: ingest_anchor + confidence rubric
+│   ├── test_catalog.py             # 29 tests: GPU/model catalog loading and lookup
+│   ├── test_benchmark_plan.py      # 27 tests: test matrix ordering, step count, priority
+│   ├── test_deployment_advisor.py  # 26 tests: load_deployment, compute_tradeoff, recommend
+│   ├── test_report.py              # 24 tests: mode badges, confidence bands, cost envelope
+│   ├── test_run_eval.py            # 18 tests: dataset loading, score normalization, sidecar
+│   ├── test_cost.py                # 18 tests: cost envelope, on-demand vs reserved
+│   ├── test_efficiency.py          # 16 tests: MFU + bandwidth efficiency curves
+│   ├── test_compare.py             # 19 tests: cheapest/safest/best-latency scoring
+│   └── test_validation.py          # 9 tests: public benchmark fit and accuracy targets
 │
 ├── results/
 │   ├── real/                       # populated by run_bench.py (gitignored)
