@@ -530,6 +530,25 @@ def plan(
             f"per replica at {dtype} on {gpu.name}. "
             f"Consider increasing --tp (currently {tp}) or using a GPU with more VRAM."
         )
+    # Balanced prefill/decode warning.
+    # size_replicas uses max(replicas_prefill, replicas_decode), which assumes the
+    # binding workload owns the full GPU.  For colocated vLLM this is optimistic when
+    # both phases are significant: prefill stresses compute; decode stresses bandwidth;
+    # they share the same GPU and can contend.  When neither dominates by ≥2×, flag it.
+    pf_r = sz["replicas_prefill"]
+    dc_r = sz["replicas_decode"]
+    if pf_r > 0 and dc_r > 0:
+        _dom = max(pf_r, dc_r)
+        _sub = min(pf_r, dc_r)
+        if _dom < _sub * 2:
+            warnings.append(
+                f"Balanced prefill/decode load: prefill-driven={pf_r} replicas, "
+                f"decode-driven={dc_r} replicas (ratio {_dom/_sub:.1f}×). "
+                "Sizing uses max() which assumes independent resource pools. "
+                "For colocated vLLM both phases share the GPU — actual requirement "
+                "may be higher. Validate with run_bench.py before committing."
+            )
+
     if conf.level == "low":
         warnings.append(
             "LOW confidence: estimate uses GPU-default MFU and bandwidth efficiency. "
